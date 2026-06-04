@@ -4,6 +4,7 @@
 #include <string>
 #include <cmath>
 #include <utility>
+#include <optional>
 
 #include <Eigen/Core>
 #pragma endregion
@@ -58,7 +59,15 @@ public: // since they're all constant, no risk of accidental modification
            gamma(gamma_in),
            cleft(calculate_speed_of_sound(rholeft, pleft, gamma)),
            cright(calculate_speed_of_sound(rhoright, pright, gamma))
-        {}
+        { // validate in put (this is after sqrt operation but ok)
+            if (rholeft <= 0 || pleft <= 0 || rhoright <= 0 || pright <= 0) {
+                throw std::invalid_argument(
+                             "Density and pressure must be strictly positive.");
+            }
+            if (gamma <= 1) { throw std::invalid_argument(
+                              "Ratio of specific heat much be greater than 1.");
+            }
+        }
     
     // Accessers
     Vector3d left_state() const {
@@ -74,11 +83,36 @@ public: // since they're all constant, no risk of accidental modification
  * @class WaveConfig
  * @brief Solves and stores the wave confiuration of a Riemann problem.
  * 
- * The wave configuration is found using a iterative Newton-Raphson method.
- * The construction is done via a Factory Pattern.
+ * Note: The construction is done via a Factory Pattern.
+ * 
+ * This class computes the "star" region pressure and velocity in a 
+ * compressible flow Riemann problem. The solution is obtained using 
+ * a Newton–Raphson iteration on the pressure equation.
+ * 
+ * Construction is restricted through a factory method ("create") so that
+ * all instances are initialized with a fully solved wave configuration.
+ * 
+ * Public data members:
+ * - pstar: double
+ *      star-region pressure
+ * - ustar: double
+ *      star-region velocity
+ * - is_leftshock: bool
+ *      whether the left wave is a shock or rarefaction fan
+ * - is_rightshock: bool 
+ *      whether the right wave is a shock or rarefaction fan
+ * 
+ * Newton–Raphson details:
+ * - Initial guess uses the acoustic approximation
+ * - Iteration stops when both:
+ *      |p_{n+1} - p_n| < 1e-8
+ *      |f(p_n)| < 1e-8
+ * - Throws std::runtime_error if:
+ *      - derivative becomes numerically zero
+ *      - convergence is not achieved within 30 iterations
  */
 class WaveConfig {
-    // using factor pattern, constructor is a private member
+    // using factory pattern, constructor is a private member
     WaveConfig(double pstar_in, double ustar_in, 
                bool is_leftshock_in, bool is_rightshock_in)
                : pstar(pstar_in), ustar(ustar_in), 
@@ -194,7 +228,7 @@ public:
     const bool is_leftshock;
     const bool is_rightshock;
 
-    static WaveConfig create(const IniCond& ic) { // constructor
+    static WaveConfig solve_config(const IniCond& ic) { // factory method
         double pstar_current = // initial guess using acoustic approximation
             (ic.pleft*ic.rhoright*ic.cright + ic.pright*ic.rholeft*ic.cleft + 
              (ic.uleft-ic.uright)*ic.rholeft*ic.cleft*ic.rhoright*ic.cright
@@ -205,8 +239,8 @@ public:
         bool converged = false;
         int num_iter = 0;
         while (num_iter++ < 30) {
-            double eqn_value = 0.0;
-            double derivative_value = 0.0;
+            double eqn_value = -1.0;
+            double derivative_value = -1.0;
 
             if (pstar_current > ic.pleft) { // left shock
                 if (pstar_current > ic.pright) { // right shock
@@ -287,6 +321,139 @@ public:
     }
 };
 
+// again use factory pattern
+class WaveSolution {
+    // using factory pattern, constructor is a private member
+    WaveSolution(const IniCond& ic_in, const WaveConfig& cfg_in,
+                 double rhostarleft_in, double rhostarright_in,
+                 std::optional<double> left_shock_speed_in,
+                 std::optional<double> right_shock_speed_in,
+                 std::optional<double> left_fan_head_speed_in,
+                 std::optional<double> left_fan_tail_speed_in,
+                 std::optional<double> right_fan_head_speed_in,
+                 std::optional<double> right_fan_tail_speed_in
+                ) // optional b/c existance depends on the wave configuration
+                  : ic(ic_in),
+                    cfg(cfg_in),
+                    rhostarleft(rhostarleft_in),
+                    rhostarright(rhostarright_in),
+                    left_shock_speed(left_shock_speed_in),
+                    right_shock_speed(right_shock_speed_in),
+                    left_fan_head_speed(left_fan_head_speed_in),
+                    left_fan_tail_speed(left_fan_tail_speed_in),
+                    right_fan_head_speed(right_fan_head_speed_in),
+                    right_fan_tail_speed(right_fan_tail_speed_in)
+                {}
+
+    // functions to compute quantities
+    #pragma region helper funcs
+    static double compute_left_shock_speed(const IniCond& ic, 
+                                           const WaveConfig& cfg) {
+        return ic.uleft - ic.cleft * std::sqrt(
+                    (ic.gamma+1)*cfg.pstar/(2*ic.gamma*ic.pleft) 
+                    + (ic.gamma-1)/(2*ic.gamma)
+                    );
+    }
+
+    static double compute_right_shock_speed(const IniCond& ic,
+                                            const WaveConfig& cfg) {
+        return ic.uright - ic.cright * std::sqrt(
+                    (ic.gamma+1)*cfg.pstar/(2*ic.gamma*ic.pright) 
+                    + (ic.gamma-1)/(2*ic.gamma)
+                    );
+    }
+
+    static std::pair<double, double> compute_left_fan_speed(const IniCond& ic,
+                                                        const WaveConfig& cfg) {
+        double left_fan_head_speed = ic.uleft - ic.cleft;
+        double left_fan_tail_speed = cfg.ustar - ic.cleft * 
+                        std::pow(cfg.pstar/ic.pleft, (ic.gamma-1)/(2*ic.gamma));
+
+        return {left_fan_head_speed, left_fan_tail_speed};
+    }
+
+    static std::pair<double, double> compute_right_fan_speed(const IniCond& ic,
+                                                        const WaveConfig& cfg) {
+        double right_fan_head_speed = ic.uright + ic.cright;
+        double right_fan_tail_speed = cfg.ustar + ic.cright * 
+                       std::pow(cfg.pstar/ic.cright, (ic.gamma-1)/(2*ic.gamma));
+        
+        return {right_fan_head_speed, right_fan_tail_speed};
+    }
+
+    static double compute_rhostarleft(const IniCond& ic, const WaveConfig& cfg) 
+    {
+        if (cfg.is_leftshock) {
+            return ic.rholeft * (
+                (cfg.pstar/ic.pleft + (ic.gamma-1)/(ic.gamma+1))
+                / ((ic.gamma-1)*cfg.pstar / (ic.gamma+1)*ic.pleft + 1)
+            );
+        } else {
+            return ic.rholeft * std::pow(cfg.pstar/ic.pleft, 1/ic.gamma);
+        }
+    }
+
+    static double compute_rhostarright(const IniCond& ic, const WaveConfig& cfg)
+    {
+        if (cfg.is_rightshock) {
+            return ic.rhoright * (
+                (cfg.pstar/ic.pright + (ic.gamma-1)/(ic.gamma+1))
+                / ((ic.gamma-1)*cfg.pstar / (ic.gamma+1)*ic.pright + 1)
+            );
+        } else {
+            return ic.rhoright * std::pow(cfg.pstar/ic.pright, 1/ic.gamma);
+        }
+    }
+    #pragma endregion
+
+public:
+    const IniCond& ic; // store objects by reference
+    const WaveConfig& cfg;
+    const double rhostarleft;
+    const double rhostarright;
+    const std::optional<double> left_shock_speed;  // existance depends on the
+    const std::optional<double> right_shock_speed; // wave configuration
+    const std::optional<double> left_fan_head_speed;
+    const std::optional<double> left_fan_tail_speed;
+    const std::optional<double> right_fan_head_speed;
+    const std::optional<double> right_fan_tail_speed;
+
+    // factory method
+    static WaveSolution solve(const IniCond& ic, const WaveConfig& cfg) {
+        double rhostarleft = compute_rhostarleft(ic, cfg);
+        double rhostarright = compute_rhostarright(ic, cfg);
+        std::optional<double> left_shock_speed;  // existance depends on 
+        std::optional<double> right_shock_speed; // the wave configuration
+        std::optional<double> left_fan_head_speed;
+        std::optional<double> left_fan_tail_speed;
+        std::optional<double> right_fan_head_speed;
+        std::optional<double> right_fan_tail_speed;
+
+        if (cfg.is_leftshock) { // calculate left wave
+            left_shock_speed = compute_left_shock_speed(ic, cfg);
+        } else {
+            auto result = compute_left_fan_speed(ic, cfg); // pair of doubles
+            left_fan_head_speed = result.first;
+            left_fan_tail_speed = result.second;
+        }
+
+        if (cfg.is_rightshock) { // calculate right wave
+            right_shock_speed = compute_right_shock_speed(ic, cfg);
+        } else {
+            auto result = compute_right_fan_speed(ic, cfg); // pair of doubles
+            right_fan_head_speed = result.first;
+            right_fan_tail_speed = result.second;
+        }
+
+        return WaveSolution(ic, cfg, rhostarleft, rhostarright, 
+                            left_shock_speed,
+                            right_shock_speed,
+                            left_fan_head_speed,
+                            left_fan_tail_speed,
+                            right_fan_head_speed,
+                            right_fan_tail_speed);
+    }
+};
 #pragma endregion
 
 int main() {
