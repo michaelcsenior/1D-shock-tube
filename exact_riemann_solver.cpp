@@ -21,6 +21,8 @@ using MatrixXd = Eigen::MatrixXd;
  * This class stores primitive variables (density, velocity, pressure) for both
  * the left and right states, and the ratio of specific heat gamma. Speed of 
  * sound is computed and stored as well.
+ * 
+ * The class is immutable after construction.
  */
 class IniCond {
     static double calculate_speed_of_sound(double rho, double p, double gamma) {
@@ -83,14 +85,13 @@ public: // since they're all constant, no risk of accidental modification
  * @class WaveConfig
  * @brief Solves and stores the wave confiuration of a Riemann problem.
  * 
- * Note: The construction is done via a Factory Pattern.
- * 
  * This class computes the "star" region pressure and velocity in a 
  * compressible flow Riemann problem. The solution is obtained using 
  * a Newton–Raphson iteration on the pressure equation.
  * 
- * Construction is restricted through a factory method ("create") so that
- * all instances are initialized with a fully solved wave configuration.
+ * The class is immutable after construction. Construction is restricted 
+ * through a factory method ("create") so that each object is initialized 
+ * with a fully solved wave configuration.
  * 
  * Public data members:
  * - pstar: double
@@ -321,7 +322,33 @@ public:
     }
 };
 
-// again use factory pattern
+/**
+ * @class WaveSolution
+ * @brief Solution of a 1D Euler Riemann problem, including variables in 
+ *        the star region, and wave speeds.
+ *
+ * This class represents the solution state of a Riemann problem
+ * between left and right initial conditions (IniCond), given a wave
+ * configuration (WaveConfig).
+ *
+ * Stores:
+ * - "Star" region quantities (rho*, p*, u*)
+ * - Speeds of shock waves, or of head and tail of rarefaction fans, 
+ *   depending on wave configuration. Since not all wave quantities 
+ *   exist for every configuration, these data members are marked 
+ *   optional.
+ *
+ * The class is immutable after construction. Object is constructed 
+ * with a factory design pattern, via the static factory method "solve".
+ * 
+ * Example
+ * ------------------------------------------------------------------------
+ * IniCond ic = ...;
+ * WaveConfig cfg = WaveConfig::solve_config(ic);
+ * WaveSolution sol = WaveSolution::solve(ic, cfg);
+ *
+ * std::cout << sol.rhostarright << " ," << sol.cfg.ustar << "\n";
+ */
 class WaveSolution {
     // using factory pattern, constructor is a private member
     WaveSolution(const IniCond& ic_in, const WaveConfig& cfg_in,
@@ -353,7 +380,7 @@ class WaveSolution {
                     (ic.gamma+1)*cfg.pstar/(2*ic.gamma*ic.pleft) 
                     + (ic.gamma-1)/(2*ic.gamma)
                     );
-    }
+    } // Rankine–Hugoniot relations
 
     static double compute_right_shock_speed(const IniCond& ic,
                                             const WaveConfig& cfg) {
@@ -361,7 +388,7 @@ class WaveSolution {
                     (ic.gamma+1)*cfg.pstar/(2*ic.gamma*ic.pright) 
                     + (ic.gamma-1)/(2*ic.gamma)
                     );
-    }
+    } // Rankine–Hugoniot relations
 
     static std::pair<double, double> compute_left_fan_speed(const IniCond& ic,
                                                         const WaveConfig& cfg) {
@@ -370,7 +397,7 @@ class WaveSolution {
                         std::pow(cfg.pstar/ic.pleft, (ic.gamma-1)/(2*ic.gamma));
 
         return {left_fan_head_speed, left_fan_tail_speed};
-    }
+    } // isentropic relations
 
     static std::pair<double, double> compute_right_fan_speed(const IniCond& ic,
                                                         const WaveConfig& cfg) {
@@ -379,10 +406,11 @@ class WaveSolution {
                        std::pow(cfg.pstar/ic.cright, (ic.gamma-1)/(2*ic.gamma));
         
         return {right_fan_head_speed, right_fan_tail_speed};
-    }
+    } // isentropic relations
 
     static double compute_rhostarleft(const IniCond& ic, const WaveConfig& cfg) 
-    {
+    { // uses Rankine–Hugoniot relations (shock) 
+      //  or isentropic relations (rarefaction fan)
         if (cfg.is_leftshock) {
             return ic.rholeft * (
                 (cfg.pstar/ic.pleft + (ic.gamma-1)/(ic.gamma+1))
@@ -394,7 +422,8 @@ class WaveSolution {
     }
 
     static double compute_rhostarright(const IniCond& ic, const WaveConfig& cfg)
-    {
+    { // uses Rankine–Hugoniot relations (shock) 
+      //  or isentropic relations (rarefaction fan)
         if (cfg.is_rightshock) {
             return ic.rhoright * (
                 (cfg.pstar/ic.pright + (ic.gamma-1)/(ic.gamma+1))
@@ -418,7 +447,22 @@ public:
     const std::optional<double> right_fan_head_speed;
     const std::optional<double> right_fan_tail_speed;
 
-    // factory method
+    /**
+     * @brief Factory method used for object construction. Computes the 
+     * full Riemann solution.
+     *
+     * This function:
+     * 1. Computes star-region densities (rho*)
+     * 2. Computes shock or rarefaction wave speeds according to wave type
+     *    from WaveConfig
+     * 3. Assembles a immutable WaveSolution object
+     *
+     * @param ic Initial conditions (left/right states)
+     * @param cfg Precomputed wave configuration
+     *
+     * @return Fully constructed WaveSolution
+     */
+    static WaveSolution solve(const IniCond& ic, const WaveConfig& cfg);
     static WaveSolution solve(const IniCond& ic, const WaveConfig& cfg) {
         double rhostarleft = compute_rhostarleft(ic, cfg);
         double rhostarright = compute_rhostarright(ic, cfg);
