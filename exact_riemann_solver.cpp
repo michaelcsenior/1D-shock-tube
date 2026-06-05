@@ -58,16 +58,22 @@ public: // since they're all constant, no risk of accidental modification
            rhoright(wright(0)),
            uright(wright(1)),
            pright(wright(2)),
-           gamma(gamma_in),
-           cleft(calculate_speed_of_sound(rholeft, pleft, gamma)),
-           cright(calculate_speed_of_sound(rhoright, pright, gamma))
-        { // validate in put (this is after sqrt operation but ok)
+           cleft(calculate_speed_of_sound(rholeft, pleft, gamma_in)),
+           cright(calculate_speed_of_sound(rhoright, pright, gamma_in)),
+           gamma(gamma_in)
+        { // validate input (this is after sqrt operation but ok)
             if (rholeft <= 0 || pleft <= 0 || rhoright <= 0 || pright <= 0) {
                 throw std::invalid_argument(
                              "Density and pressure must be strictly positive.");
             }
             if (gamma <= 1) { throw std::invalid_argument(
                               "Ratio of specific heat much be greater than 1.");
+            }
+
+            // verify that IC's does not give a vaccum solution
+            if (uright - uleft - 2*(cleft+cright)/(gamma-1) >= 0) {
+                throw std::invalid_argument("Initial conditions result in "
+                                            "a vacuum solution.");
             }
         }
     
@@ -136,12 +142,13 @@ class WaveConfig {
         return {f, fprime};
     }
 
-    static std::pair<double, double> f_leftfan(double pstar, double pleft,
+    static std::pair<double, double> f_leftfan(double pstar, 
+                                               double rholeft, double pleft,
                                                double cleft, double gamma) {
         double f = 2 * cleft *
             (std::pow(pstar/pleft, (gamma-1)/(2*gamma)) - 1) / (gamma-1) ;
         double fprime = std::pow(pstar/pleft, -(gamma+1)/(2*gamma)) 
-                        / (pleft*cleft);
+                        / (rholeft*cleft);
 
         return {f, fprime};
     }
@@ -159,13 +166,14 @@ class WaveConfig {
         return {f, fprime};
     }
 
-    static std::pair<double, double> f_rightfan(double pstar, double pright,
+    static std::pair<double, double> f_rightfan(double pstar, 
+                                                double rhoright, double pright,
                                                 double cright, double gamma) {
         double f = 2 * cright *
             (std::pow(pstar/pright, (gamma-1)/(2*gamma)) - 1) / (gamma-1) ;
         double fprime = std::pow(pstar/pright, -(gamma+1)/(2*gamma)) 
-                        / (pright*cright);
-        
+                        / (rhoright*cright);
+
         return {f, fprime};
     }
 
@@ -188,20 +196,21 @@ class WaveConfig {
         auto [fleft, fleftprime] = // double, double
                     f_leftshock(pstar_current, ic.rholeft, ic.pleft, ic.gamma);
         auto [fright, frightprime] = // double, double
-                    f_rightfan(pstar_current, ic.pright, ic.cright, ic.gamma);
+                    f_rightfan(pstar_current, ic.rhoright, 
+                               ic.pright, ic.cright, ic.gamma);
         
         double eqn_value = fleft + fright + ic.uright - ic.uleft;
         double derivative_value =  fleftprime + frightprime;
-        
+
         return {eqn_value, derivative_value};
     }
 
     static std::pair<double, double> leftfan_rightshock(double pstar_current,
                                                         const IniCond& ic) {
         auto [fleft, fleftprime] = // double, double
-                f_leftfan(pstar_current, ic.pleft, ic.cleft, ic.gamma);
+            f_leftfan(pstar_current, ic.rholeft, ic.pleft, ic.cleft, ic.gamma);
         auto [fright, frightprime] = // double, double 
-                f_rightshock(pstar_current, ic.rhoright, ic.pright, ic.gamma);
+            f_rightshock(pstar_current, ic.rhoright, ic.pright, ic.gamma);
         
         double eqn_value = fleft + fright + ic.uright - ic.uleft;
         double derivative_value =  fleftprime + frightprime;
@@ -212,9 +221,10 @@ class WaveConfig {
     static std::pair<double, double> leftfan_rightfan(double pstar_current,
                                                       const IniCond& ic) {
         auto [fleft, fleftprime] = // double, double
-                    f_leftfan(pstar_current, ic.pleft, ic.cleft, ic.gamma);
+            f_leftfan(pstar_current, ic.rholeft, ic.pleft, ic.cleft, ic.gamma);
         auto [fright, frightprime] = // double, double
-                    f_rightfan(pstar_current, ic.pright, ic.cright, ic.gamma);
+            f_rightfan(pstar_current, ic.rhoright, 
+                       ic.pright, ic.cright, ic.gamma);
         
         double eqn_value = fleft + fright + ic.uright - ic.uleft;
         double derivative_value =  fleftprime + frightprime;
@@ -236,12 +246,14 @@ public:
             ) / (ic.rhoright*ic.cright + ic.rholeft*ic.cleft);
         // under some IC's the acoustic approximation may be negative:
         if (pstar_current <= 0) {pstar_current = 1e-6;}
-        
+
         bool converged = false;
         int num_iter = 0;
         while (num_iter++ < 30) {
             double eqn_value = -1.0;
             double derivative_value = -1.0;
+            double pstar_next = -1.0;
+            double eqn_value_prev = -1.0;
 
             if (pstar_current > ic.pleft) { // left shock
                 if (pstar_current > ic.pright) { // right shock
@@ -265,20 +277,21 @@ public:
                 }
             }
 
-            if (std::abs(derivative_value) < 1e-12) {
+            if (std::abs(derivative_value) < 1e-10) {
                 throw std::runtime_error("Division by zero encountered in "
                                          "Newton-Raphson method.");
             }
             // Newton-Raphson step
-            double pstar_next = pstar_current - eqn_value / derivative_value;
+            pstar_next = pstar_current - eqn_value / derivative_value;
 
-            if (std::abs(pstar_next - pstar_current) < 1e-8
-                && std::abs(eqn_value < 1e-8)) {            // convergence
+            if (std::abs(pstar_next - pstar_current)/pstar_current < 1e-6
+                && std::abs(eqn_value) < 1e-3) {            // convergence
                 pstar_current = pstar_next;
                 converged = true;
                 break;
             }
 
+            if (pstar_next <= 0) {pstar_next = pstar_current/2;}
             pstar_current = pstar_next;
         }
         
@@ -300,8 +313,8 @@ public:
                     f_leftshock(pstar_current, ic.rholeft, ic.pleft, ic.gamma);
             fleft = result.first;
         } else {
-            auto result = 
-                    f_leftfan(pstar_current, ic.pleft, ic.cleft, ic.gamma);
+            auto result = f_leftfan(pstar_current, ic.rholeft, 
+                                    ic.pleft, ic.cleft, ic.gamma);
             fleft = result.first;
         }
 
@@ -311,8 +324,8 @@ public:
                 f_rightshock(pstar_current, ic.rhoright, ic.pright, ic.gamma);
             fright = result.first;
         } else {
-            auto result = 
-                    f_rightfan(pstar_current, ic.pright, ic.cright, ic.gamma);
+            auto result = f_rightfan(pstar_current, ic.rhoright, 
+                                     ic.pright, ic.cright, ic.gamma);
             fright = result.first;
         }
 
@@ -325,7 +338,8 @@ public:
 /**
  * @class WaveSolution
  * @brief Solution of a 1D Euler Riemann problem, including variables in 
- *        the star region, and wave speeds.
+ *        the star region, and wave speeds. Variables within rarefaction 
+ *        fans are not computed.
  *
  * This class represents the solution state of a Riemann problem
  * between left and right initial conditions (IniCond), given a wave
@@ -372,7 +386,7 @@ class WaveSolution {
                     right_fan_tail_speed(right_fan_tail_speed_in)
                 {}
 
-    // functions to compute quantities
+    // member functions to compute quantities
     #pragma region helper funcs
     static double compute_left_shock_speed(const IniCond& ic, 
                                            const WaveConfig& cfg) {
@@ -384,7 +398,7 @@ class WaveSolution {
 
     static double compute_right_shock_speed(const IniCond& ic,
                                             const WaveConfig& cfg) {
-        return ic.uright - ic.cright * std::sqrt(
+        return ic.uright + ic.cright * std::sqrt(
                     (ic.gamma+1)*cfg.pstar/(2*ic.gamma*ic.pright) 
                     + (ic.gamma-1)/(2*ic.gamma)
                     );
@@ -403,7 +417,7 @@ class WaveSolution {
                                                         const WaveConfig& cfg) {
         double right_fan_head_speed = ic.uright + ic.cright;
         double right_fan_tail_speed = cfg.ustar + ic.cright * 
-                       std::pow(cfg.pstar/ic.cright, (ic.gamma-1)/(2*ic.gamma));
+                       std::pow(cfg.pstar/ic.pright, (ic.gamma-1)/(2*ic.gamma));
         
         return {right_fan_head_speed, right_fan_tail_speed};
     } // isentropic relations
@@ -414,7 +428,7 @@ class WaveSolution {
         if (cfg.is_leftshock) {
             return ic.rholeft * (
                 (cfg.pstar/ic.pleft + (ic.gamma-1)/(ic.gamma+1))
-                / ((ic.gamma-1)*cfg.pstar / (ic.gamma+1)*ic.pleft + 1)
+                / ((ic.gamma-1)*cfg.pstar / ((ic.gamma+1)*ic.pleft) + 1)
             );
         } else {
             return ic.rholeft * std::pow(cfg.pstar/ic.pleft, 1/ic.gamma);
@@ -427,7 +441,7 @@ class WaveSolution {
         if (cfg.is_rightshock) {
             return ic.rhoright * (
                 (cfg.pstar/ic.pright + (ic.gamma-1)/(ic.gamma+1))
-                / ((ic.gamma-1)*cfg.pstar / (ic.gamma+1)*ic.pright + 1)
+                / ((ic.gamma-1)*cfg.pstar / ((ic.gamma+1)*ic.pright) + 1)
             );
         } else {
             return ic.rhoright * std::pow(cfg.pstar/ic.pright, 1/ic.gamma);
@@ -436,8 +450,8 @@ class WaveSolution {
     #pragma endregion
 
 public:
-    const IniCond& ic; // store objects by reference
-    const WaveConfig& cfg;
+    const IniCond ic; // must copy objects, cannot store by reference, b/c
+    const WaveConfig cfg; // they will be out of scope when function returns
     const double rhostarleft;
     const double rhostarright;
     const std::optional<double> left_shock_speed;  // existance depends on the
@@ -456,14 +470,14 @@ public:
      * 2. Computes shock or rarefaction wave speeds according to wave type
      *    from WaveConfig
      * 3. Assembles a immutable WaveSolution object
+     * 4. Note: does not compute variables inside rarefaction fans
      *
      * @param ic Initial conditions (left/right states)
      * @param cfg Precomputed wave configuration
      *
      * @return Fully constructed WaveSolution
      */
-    static WaveSolution solve(const IniCond& ic, const WaveConfig& cfg);
-    static WaveSolution solve(const IniCond& ic, const WaveConfig& cfg) {
+    static WaveSolution solve_wave(const IniCond& ic, const WaveConfig& cfg) {
         double rhostarleft = compute_rhostarleft(ic, cfg);
         double rhostarright = compute_rhostarright(ic, cfg);
         std::optional<double> left_shock_speed;  // existance depends on 
@@ -500,7 +514,29 @@ public:
 };
 #pragma endregion
 
+#pragma region functions
+WaveSolution get_wave_config(Vector3d wleft, Vector3d wright, double gamma) {
+    // input validation is done within IniCond construction
+    // it checks sign of density & pressure, and checks for vacuum solution
+    IniCond ic = IniCond(wleft, wright, gamma);
+    WaveConfig cfg = WaveConfig::solve_config(ic);
+    WaveSolution soln = WaveSolution::solve_wave(ic, cfg);
+    return soln;
+    // now, the only unknown variables are states(rho, u, P) inside rarefaction
+    // fans. they will be calculated later if needed
+}
+
 int main() {
     std::cout << "Hello, world!" << std::endl;
+    Vector3d wleft(1,-2,0.4);
+    Vector3d wright(1,2,0.4);
+    double gamma = 1.4;
+    WaveSolution soln = get_wave_config(wleft, wright, gamma);
+    std::cout << soln.rhostarleft << "\n" <<soln.rhostarright << std::endl;
+    std::cout << "ustar " << soln.cfg.ustar << std::endl;
+    std::cout << std::to_string(*soln.left_fan_head_speed) << "\n" 
+    << std::to_string(*soln.left_fan_tail_speed) << "\n" << 
+    std::to_string(*soln.right_fan_head_speed) << "\n"
+    << std::to_string(*soln.right_fan_tail_speed) << std::endl;
     return 0;
 }
