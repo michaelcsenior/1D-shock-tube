@@ -51,7 +51,7 @@ public: // since they're all constant, no risk of accidental modification
      *
      * The constructor computes the speed of sound for both states.
      */
-    IniCond(Vector3d wleft, Vector3d wright, double gamma_in)
+    IniCond(const Vector3d& wleft, const Vector3d& wright, double gamma_in)
          : rholeft(wleft(0)), 
            uleft(wleft(1)),
            pleft(wleft(2)),
@@ -450,7 +450,7 @@ class WaveSolution {
     #pragma endregion
 
 public:
-    const IniCond ic; // must copy objects, cannot store by reference, b/c
+    const IniCond ic;     // must copy objects, cannot store by reference, b/c
     const WaveConfig cfg; // they will be out of scope when function returns
     const double rhostarleft;
     const double rhostarright;
@@ -515,7 +515,32 @@ public:
 #pragma endregion
 
 #pragma region functions
-WaveSolution get_wave_config(Vector3d wleft, Vector3d wright, double gamma) {
+/**
+ * @brief Solves the 1D Riemann problem for the Euler equations.
+ *
+ * Constructs the initial-condition object from the left and right
+ * primitive states, computes the star-region wave configuration,
+ * and returns the complete wave solution structure.
+ *
+ * The returned solution contains wave types and speeds and states  
+ * in the star region. States inside rarefaction fans are not 
+ * stored here and can be computed later as needed.
+ *
+ * @param wleft  Left primitive state vector (rho, u, p).
+ * @param wright Right primitive state vector (rho, u, p).
+ * @param gamma  Ratio of specific heats.
+ *
+ * @return WaveSolution object: stores complete solution of the 
+ * Riemann problem.
+ *
+ * @throws std::invalid_argument If either input state contains
+ *         nonphysical values (density/pressure <= 0) or if
+ *         they produces a vacuum solution. (The exception is 
+ *         checked not within the function it self but within 
+ *         IniCond object construction)
+ */
+WaveSolution get_wave_config(const Vector3d& wleft, const Vector3d& wright, 
+                             double gamma) {
     // input validation is done within IniCond construction
     // it checks sign of density & pressure, and checks for vacuum solution
     IniCond ic = IniCond(wleft, wright, gamma);
@@ -526,17 +551,117 @@ WaveSolution get_wave_config(Vector3d wleft, Vector3d wright, double gamma) {
     // fans. they will be calculated later if needed
 }
 
+/**
+ * @brief Samples the state of a 1D Euler Riemann problem at a given
+ *        similarity coordinate.
+ *
+ * Evaluates the Riemann solution at a given similarity value of
+ * s = x / t and returns the corresponding state of primitive variables
+ * (density, velocity, pressure).
+ * The default value s = 0 is provided for use in Godunov-type schemes,
+ * where the solution is sampled at cell interfaces during the evolution 
+ * step.
+ *
+ * @param soln Precomputed Riemann solution containing wave configuration,
+ *             wave speeds, and states in star regions.
+ * @param s    Similarity coordinate (x/t) at which to sample the solution.
+ *             Default is 0.
+ *
+ * @return Vector3d Primitive variables (rho, u, p) at the specified s.
+ */
+Vector3d get_s_state(const WaveSolution& soln, double s = 0) {
+    Vector3d w_along_s = Vector3d::Zero();
+    
+    if (std::abs(s - soln.cfg.ustar) < 1e-6) { // s is the constact surface
+        w_along_s << 0.5 * (soln.rhostarleft+soln.rhostarright), 
+                     soln.cfg.ustar, 
+                     soln.cfg.pstar;   
+    }
+    else if (s < soln.cfg.ustar) { // s is on left side of contact surface
+        if (soln.cfg.is_leftshock) { // left wave is shock
+            if (std::abs(*soln.left_shock_speed - s) <= 1e-6) { // s is shock
+// note: here I dereference (*) soln.left_shock_speed because it is an optional
+// variable. to perform arithmetic operation on it is must be dereferenced
+// here it's safe to dereference because I know 100% for sure the value exists  
+                // use average of before and after shock value
+                w_along_s << 0.5 * (soln.ic.rholeft + soln.rhostarleft),
+                             0.5 * (soln.ic.uleft + soln.cfg.ustar),
+                             0.5 * (soln.ic.pleft + soln.cfg.pstar);
+            } else if (*soln.left_shock_speed > s) { // s within left ini cond
+                w_along_s << soln.ic.rholeft, soln.ic.uleft, soln.ic.pleft;
+            } else { // s within left star region
+                w_along_s << soln.rhostarleft, soln.cfg.ustar, soln.cfg.pstar;
+            }
+        } else { // left wave is rarefaction fan
+            if (*soln.left_fan_head_speed >= s) { // s within left initial cond
+                w_along_s << soln.ic.rholeft, soln.ic.uleft, soln.ic.pleft;
+            } else if (*soln.left_fan_tail_speed <= s) { // s within left star
+                w_along_s << soln.rhostarleft, soln.cfg.ustar, soln.cfg.pstar;
+            } else { // s inside left fan
+                w_along_s(0) = soln.ic.rholeft * std::pow(
+                    (2/(soln.ic.gamma+1) + (soln.ic.gamma-1)*(soln.ic.uleft-s)
+                                           / ((soln.ic.gamma+1)*soln.ic.cleft)),
+                    (2/(soln.ic.gamma-1))
+                );
+                w_along_s(1) = 2 / (soln.ic.gamma+1) 
+                    * (soln.ic.cleft + soln.ic.uleft*(soln.ic.gamma-1)/2 + s);
+                w_along_s(2) = soln.ic.pleft
+                    * std::pow(w_along_s(0)/soln.ic.rholeft, soln.ic.gamma);
+            }
+        }
+    }
+    else { // s is on the right side of contact surface
+        if (soln.cfg.is_rightshock) { // right wave is shock
+            if (std::abs(*soln.right_shock_speed - s) <= 1e-6) { // s is shock
+// note: here I dereference (*) soln.left_shock_speed because it is an optional
+// variable. to perform arithmetic operation on it is must be dereferenced
+// here it's safe to dereference because I know 100% for sure the value exists
+                // use average of before and after shock value
+                w_along_s << 0.5 * (soln.ic.rhoright + soln.rhostarright),
+                             0.5 * (soln.ic.uright + soln.cfg.ustar),
+                             0.5 * (soln.ic.pright + soln.cfg.pstar);
+            } else if (*soln.right_shock_speed < s) { // s in right initial cond
+                w_along_s << soln.ic.rhoright, soln.ic.uright, soln.ic.pright;
+            } else { // s within right star region
+                w_along_s << soln.rhostarright, soln.cfg.ustar, soln.cfg.pstar;
+            }
+        } else { // right wave is rarefaction fan
+            if (*soln.right_fan_head_speed <= s) { // s within right ini cond
+                w_along_s << soln.ic.rhoright, soln.ic.uright, soln.ic.pright;
+            } else if (*soln.right_fan_tail_speed >= s) { // s within right star
+                w_along_s << soln.rhostarright, soln.cfg.ustar, soln.cfg.pstar;
+            } else { // s inside right fan
+                w_along_s(0) = soln.ic.rhoright * std::pow(
+                    (2/(soln.ic.gamma+1) - (soln.ic.gamma-1)*(soln.ic.uright-s)
+                                           /((soln.ic.gamma+1)*soln.ic.cright)),
+                    (2/(soln.ic.gamma-1))
+                );
+                w_along_s(1) = 2 / (soln.ic.gamma+1) 
+                   * (-soln.ic.cright + soln.ic.uright*(soln.ic.gamma-1)/2 + s);
+                w_along_s(2) = soln.ic.pright
+                    * std::pow(w_along_s(0)/soln.ic.rhoright, soln.ic.gamma);
+            }
+        }
+    }
+
+    return w_along_s;
+}
+
 int main() {
     std::cout << "Hello, world!" << std::endl;
-    Vector3d wleft(1,-2,0.4);
-    Vector3d wright(1,2,0.4);
+    Vector3d wleft(1.0,0.0,0.01);
+    Vector3d wright(1,0,100);
     double gamma = 1.4;
     WaveSolution soln = get_wave_config(wleft, wright, gamma);
-    std::cout << soln.rhostarleft << "\n" <<soln.rhostarright << std::endl;
-    std::cout << "ustar " << soln.cfg.ustar << std::endl;
-    std::cout << std::to_string(*soln.left_fan_head_speed) << "\n" 
-    << std::to_string(*soln.left_fan_tail_speed) << "\n" << 
-    std::to_string(*soln.right_fan_head_speed) << "\n"
-    << std::to_string(*soln.right_fan_tail_speed) << std::endl;
+    // std::cout << soln.rhostarleft << "\n" <<soln.rhostarright << std::endl;
+    // std::cout << "ustar " << soln.cfg.ustar << std::endl;
+    // std::cout << std::to_string(*soln.left_fan_head_speed) << "\n" 
+    // << std::to_string(*soln.left_fan_tail_speed) << "\n" << 
+    // std::to_string(*soln.right_fan_head_speed) << "\n"
+    // << std::to_string(*soln.right_fan_tail_speed) << std::endl;
+
+    Vector3d interface_state = get_s_state(soln);
+    std::cout << interface_state << std::endl;
+
     return 0;
 }
