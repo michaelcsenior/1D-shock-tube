@@ -7,7 +7,10 @@
 
 #include <Eigen/Core>
 
-using Vector3d = Eigen::Vector3d;
+using Array31d = Eigen::Array<double, 3, 1>;
+// using Array rather than Vector/Matrix because in this project 
+// all operations are element-wise array operation. there is no 
+// matrix operations
 
 #pragma region classes
 /**
@@ -39,19 +42,19 @@ public: // since they're all constant, no risk of accidental modification
      * @brief Constructor.
      *
      * @param wleft  Primitive variables for left state [rho, u, p], of type 
-     *               Vector3d.
+     *               Array<double, 3, 1>.
      * @param wright Primitive variables for right state [rho, u, p], of type 
-     *               Vector3d.
+     *               Array<double, 3, 1>.
      * @param gamma_in  Ratio of specific heats.
      *
      * The constructor computes the speed of sound for both states.
      */
-    IniCond(const Vector3d& wleft, const Vector3d& wright, double gamma_in);
+    IniCond(const Array31d& wleft, const Array31d& wright, double gamma_in);
     
     // Accessers
-    Vector3d left_state() const;
+    Array31d left_state() const;
 
-    Vector3d right_state() const;
+    Array31d right_state() const;
 };
 
 /**
@@ -247,7 +250,7 @@ public:
  *         checked not within the function it self but within 
  *         IniCond object construction)
  */
-WaveSolution get_wave_config(const Vector3d& wleft, const Vector3d& wright, 
+WaveSolution get_wave_config(const Array31d& wleft, const Array31d& wright, 
                              double gamma);
 
 /**
@@ -266,9 +269,9 @@ WaveSolution get_wave_config(const Vector3d& wleft, const Vector3d& wright,
  * @param s    Similarity coordinate (x/t) at which to sample the solution.
  *             Default is 0.
  *
- * @return Vector3d Primitive variables (rho, u, p) at the specified s.
+ * @return Array<double,3,1> Primitive variables (rho, u, p) at the specified s.
  */
-Vector3d get_s_state(const WaveSolution& soln, double s = 0);
+Array31d get_s_state(const WaveSolution& soln, double s = 0);
 #pragma endregion
 
 #endif
