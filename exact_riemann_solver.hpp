@@ -7,7 +7,7 @@
 
 #include <Eigen/Core>
 
-using Array31d = Eigen::Array<double, 3, 1>;
+using Array3d = Eigen::Array3d; // 3x1 array
 // using Array rather than Vector/Matrix because in this project 
 // all operations are element-wise array operation. there is no 
 // matrix operations
@@ -49,12 +49,12 @@ public: // since they're all constant, no risk of accidental modification
      *
      * The constructor computes the speed of sound for both states.
      */
-    IniCond(const Array31d& wleft, const Array31d& wright, double gamma_in);
+    IniCond(const Array3d& wleft, const Array3d& wright, double gamma_in);
     
     // Accessers
-    Array31d left_state() const;
+    Array3d left_state() const;
 
-    Array31d right_state() const;
+    Array3d right_state() const;
 };
 
 /**
@@ -250,7 +250,7 @@ public:
  *         checked not within the function it self but within 
  *         IniCond object construction)
  */
-WaveSolution get_wave_config(const Array31d& wleft, const Array31d& wright, 
+WaveSolution get_wave_config(const Array3d& wleft, const Array3d& wright, 
                              double gamma);
 
 /**
@@ -271,7 +271,7 @@ WaveSolution get_wave_config(const Array31d& wleft, const Array31d& wright,
  *
  * @return Array<double,3,1> Primitive variables (rho, u, p) at the specified s.
  */
-Array31d get_s_state(const WaveSolution& soln, double s = 0);
+Array3d get_s_state(const WaveSolution& soln, double s = 0);
 #pragma endregion
 
 #endif

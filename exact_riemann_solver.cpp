@@ -12,7 +12,7 @@
 #include "exact_riemann_solver.hpp"
 #pragma endregion
 
-using Array31d = Eigen::Array<double, 3, 1>;
+using Array3d = Eigen::Array3d; // 3x1 array
 
 #pragma region class implementations
 // class IniCond
@@ -21,7 +21,7 @@ using Array31d = Eigen::Array<double, 3, 1>;
         return std::sqrt(gamma * p / rho);
     }
 
-    IniCond::IniCond(const Array31d& wleft, const Array31d& wright, 
+    IniCond::IniCond(const Array3d& wleft, const Array3d& wright, 
                      double gamma_in)
          : rholeft(wleft(0)), 
            uleft(wleft(1)),
@@ -49,12 +49,12 @@ using Array31d = Eigen::Array<double, 3, 1>;
         }
     
     // Accessers
-    Array31d IniCond::left_state() const {
-        return Array31d(rholeft, uleft, pleft);
+    Array3d IniCond::left_state() const {
+        return Array3d(rholeft, uleft, pleft);
     }
 
-    Array31d IniCond::right_state() const {
-        return Array31d(rhoright, uright, pright);
+    Array3d IniCond::right_state() const {
+        return Array3d(rhoright, uright, pright);
     }
 
 // class WaveConfig
@@ -402,7 +402,7 @@ using Array31d = Eigen::Array<double, 3, 1>;
 #pragma endregion
 
 #pragma region functions
-WaveSolution get_wave_config(const Array31d& wleft, const Array31d& wright, 
+WaveSolution get_wave_config(const Array3d& wleft, const Array3d& wright, 
                              double gamma) {
     // input validation is done within IniCond construction
     // it checks sign of density & pressure, and checks for vacuum solution
@@ -414,8 +414,8 @@ WaveSolution get_wave_config(const Array31d& wleft, const Array31d& wright,
     // fans. they will be calculated later if needed
 }
 
-Array31d get_s_state(const WaveSolution& soln, double s) {
-    Array31d w_along_s = Array31d::Zero();
+Array3d get_s_state(const WaveSolution& soln, double s) {
+    Array3d w_along_s = Array3d::Zero();
     
     if (std::abs(s - soln.cfg.ustar) < 1e-6) { // s is the constact surface
         w_along_s << 0.5 * (soln.rhostarleft+soln.rhostarright), 
@@ -495,8 +495,8 @@ Array31d get_s_state(const WaveSolution& soln, double s) {
 
 // int main() {
 //     std::cout << "Hello, world!" << std::endl;
-//     Array31d wleft(1.0,0.0,0.01);
-//     Array31d wright(1,0,100);
+//     Array3d wleft(1.0,0.0,0.01);
+//     Array3d wright(1,0,100);
 //     double gamma = 1.4;
 //     WaveSolution soln = get_wave_config(wleft, wright, gamma);
 //     // std::cout << soln.rhostarleft << "\n" <<soln.rhostarright << std::endl;
@@ -506,7 +506,7 @@ Array31d get_s_state(const WaveSolution& soln, double s) {
 //     // std::to_string(*soln.right_fan_head_speed) << "\n"
 //     // << std::to_string(*soln.right_fan_tail_speed) << std::endl;
 
-//     Array31d interface_state = get_s_state(soln);
+//     Array3d interface_state = get_s_state(soln);
 //     std::cout << interface_state << std::endl;
 
 //     return 0;
