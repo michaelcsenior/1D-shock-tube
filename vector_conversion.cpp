@@ -2,12 +2,13 @@
 // utility module used to calculate state variables in vector notations, 
 // i.e. W, U, F, from one another
 
-#include <iostream>
 #include <cmath>
 #include <stdexcept>
 #include <string>
 
 #include <Eigen/Core>
+
+#include "vector_conversion.hpp"
 
 using Array3Xd = Eigen::Array3Xd;
 
