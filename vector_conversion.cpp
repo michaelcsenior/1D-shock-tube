@@ -12,6 +12,8 @@
 
 using Array3Xd = Eigen::Array3Xd;
 
+namespace vector_conversion {
+
 void check_dimension(const Array3Xd& a, const Array3Xd& b) {
     if (a.cols() != b.cols()) {
         throw std::invalid_argument("Expected input matrices of the same shape."
@@ -74,3 +76,5 @@ void flux_from_primitive(const Array3Xd& w, Array3Xd& f, double gamma) {
     f.row(1) = rho * velo.square() + p;
     f.row(2) = (rhoE + p) * velo;
 }
+
+} // end of namespace vector_conversion

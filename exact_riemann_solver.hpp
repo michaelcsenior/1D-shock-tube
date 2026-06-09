@@ -12,6 +12,8 @@ using Array3d = Eigen::Array3d; // 3x1 array
 // all operations are element-wise array operation. there is no 
 // matrix operations
 
+namespace exact_riemann_solver {
+
 #pragma region classes
 /**
  * @class IniCond
@@ -273,5 +275,7 @@ WaveSolution get_wave_config(const Array3d& wleft, const Array3d& wright,
  */
 Array3d get_s_state(const WaveSolution& soln, double s = 0);
 #pragma endregion
+
+} // end of namespace exact_riemann_solver
 
 #endif

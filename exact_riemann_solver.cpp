@@ -14,6 +14,8 @@
 
 using Array3d = Eigen::Array3d; // 3x1 array
 
+namespace exact_riemann_solver {
+
 #pragma region class implementations
 // class IniCond
     double IniCond::calculate_speed_of_sound(double rho, double p, double gamma)
@@ -492,6 +494,8 @@ Array3d get_s_state(const WaveSolution& soln, double s) {
     return w_along_s;
 }
 #pragma endregion
+
+} // end of namespace exact_riemann_solver
 
 // int main() {
 //     std::cout << "Hello, world!" << std::endl;
